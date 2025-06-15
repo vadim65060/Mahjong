@@ -1,23 +1,22 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using Core.Api;
 using DG.Tweening;
-using UnityEngine;
 
 namespace Core
 {
     public class AutoPlayController : IService
     {
+        public event Action OnAutoPlayStarted;
+        public event Action OnAutoPlayEnded;
+
         private readonly LevelGenerator _levelGenerator;
-        private readonly FieldController _fieldController = ServiceLocator.Get<FieldController>();
         private readonly Score _score = ServiceLocator.Get<Score>();
+        private readonly FieldController _fieldController = ServiceLocator.Get<FieldController>();
         private readonly float _moveDelay;
 
         private bool _isRunning;
-
-        public event Action OnAutoPlayStarted;
-        public event Action OnAutoPlayEnded;
+        private Sequence _autoPlaySequence;
 
         public AutoPlayController(LevelGenerator levelGenerator, float moveDelay = 0.5f)
         {
@@ -29,59 +28,75 @@ namespace Core
         {
             if (_isRunning)
             {
-                OnAutoPlayEnded?.Invoke();
                 StopAutoPlay();
             }
             else
             {
-                OnAutoPlayStarted?.Invoke();
                 StartAutoPlay();
             }
+        }
+
+        public void AbortAutoPlay()
+        {
+            OnAutoPlayEnded?.Invoke();
+            _isRunning = false;
+            _autoPlaySequence.Kill();
+            _autoPlaySequence = null;
+        }
+
+        private void StopAutoPlay()
+        {
+            if (!_isRunning) return;
+
+            OnAutoPlayEnded?.Invoke();
+            _isRunning = false;
+            _autoPlaySequence = null;
         }
 
         private void StartAutoPlay()
         {
             if (_isRunning || _levelGenerator.CellCount == 0) return;
 
+            OnAutoPlayStarted?.Invoke();
             _isRunning = true;
-            CoroutineStarter.RunCoroutine(AutoPlayRoutine());
+            _autoPlaySequence = DOTween.Sequence();
+            RunAutoPlayStep();
         }
 
-        private void StopAutoPlay()
+        private void RunAutoPlayStep()
         {
-            _isRunning = false;
-        }
-
-        private IEnumerator AutoPlayRoutine()
-        {
-            while (_isRunning && _levelGenerator.CellCount > 0)
+            if (!_isRunning || _levelGenerator.CellCount == 0)
             {
-                var availablePair = FindAvailablePair();
-                if (availablePair == null)
-                {
-                    yield return new WaitForSeconds(_moveDelay);
-                    continue;
-                }
-
-                // Анимация выделения
-                availablePair.Value.Item1.transform.DOScale(1.2f, _moveDelay / 2);
-                availablePair.Value.Item2.transform.DOScale(1.2f, _moveDelay / 2);
-                yield return new WaitForSeconds(_moveDelay);
-
-                // Анимация удаления
-                availablePair.Value.Item1.transform.DOScale(0f, _moveDelay / 2);
-                availablePair.Value.Item2.transform.DOScale(0f, _moveDelay / 2);
-                yield return new WaitForSeconds(_moveDelay);
-
-                _levelGenerator.DeleteCell(availablePair.Value.Item1);
-                _levelGenerator.DeleteCell(availablePair.Value.Item2);
-                _score.OnMatch();
-                _fieldController.UpdateCellsColor();
-
-                yield return new WaitForSeconds(_moveDelay);
+                _isRunning = false;
+                return;
             }
 
-            _isRunning = false;
+            var availablePair = FindAvailablePair();
+            if (availablePair == null)
+            {
+                _isRunning = false;
+                return;
+            }
+
+            var (cell1, cell2) = availablePair.Value;
+
+            _autoPlaySequence = DOTween.Sequence()
+                .Join(cell1.transform.DOScale(1.2f, _moveDelay / 2))
+                .Join(cell2.transform.DOScale(1.2f, _moveDelay / 2))
+                .AppendInterval(_moveDelay)
+                .Join(cell1.transform.DOScale(0f, _moveDelay / 2))
+                .Join(cell2.transform.DOScale(0f, _moveDelay / 2))
+                .AppendCallback(() =>
+                {
+                    _levelGenerator.DeleteCell(cell1);
+                    _levelGenerator.DeleteCell(cell2);
+                    _score.OnMatch();
+                    _fieldController.UpdateCellsColor();
+                })
+                .AppendInterval(_moveDelay)
+
+                // Следующий шаг
+                .OnComplete(RunAutoPlayStep);
         }
 
         private (Cell, Cell)? FindAvailablePair()
@@ -98,7 +113,7 @@ namespace Core
 
             int maxLayer = -1;
             (Cell, Cell)? pair = null;
-            
+
             for (int i = 0; i < availableCells.Count; i++)
             {
                 for (int j = i + 1; j < availableCells.Count; j++)
@@ -113,31 +128,6 @@ namespace Core
             }
 
             return pair;
-        }
-    }
-
-    // Вспомогательный класс для запуска корутин из не-MonoBehaviour класса
-    public class CoroutineStarter : MonoBehaviour
-    {
-        private static CoroutineStarter _instance;
-
-        public static Coroutine RunCoroutine(IEnumerator coroutine)
-        {
-            if (_instance == null)
-            {
-                _instance = new GameObject("CoroutineStarter").AddComponent<CoroutineStarter>();
-                DontDestroyOnLoad(_instance.gameObject);
-            }
-
-            return _instance.StartCoroutine(coroutine);
-        }
-
-        public static void StopRunningCoroutine(Coroutine coroutine)
-        {
-            if (_instance != null && coroutine != null)
-            {
-                _instance.StopCoroutine(coroutine);
-            }
         }
     }
 }

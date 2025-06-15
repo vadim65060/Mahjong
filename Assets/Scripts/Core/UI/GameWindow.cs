@@ -98,7 +98,7 @@ namespace Core.UI
             _level = ServiceLocator.Get<LevelLoader>();
             Score = 0;
             _settingsButton?.onClick.AddListener(OpenSettings);
-            _restartButton?.onClick.AddListener(_field.ResetField);
+            _restartButton?.onClick.AddListener(Restart);
             _autoPlayButton?.onClick.AddListener(_autoPlay.ToggleAutoPlay);
         }
 
@@ -117,6 +117,13 @@ namespace Core.UI
             ServiceLocator.Get<FieldController>().SetFieldVisibility(false);
 
             gameObject.SetActive(false);
+        }
+        
+        private void Restart()
+        {
+            _autoPlay.AbortAutoPlay();
+            _score.Reset();
+            _field.ResetField();
         }
 
         private void Pause()
